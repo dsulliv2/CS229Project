@@ -1,0 +1,325 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+
+#Step 1 - import the data 
+library(dplyr)
+raw.test <- function(){
+  cls <- c('factor', 'factor', 'Date', 'logical')
+  test <- read.csv('/Users/sullivan42/Documents/MATLAB/MMDS/cs229/project/data/train/test/test.csv', 
+                   colClasses=cls)
+}
+raw.train <- function(){
+  cls <- c('factor', 'factor', 'Date', 'numeric', 'logical')
+  test <- read.csv('/Users/sullivan42/Documents/MATLAB/MMDS/cs229/project/data/train/train/train.csv', 
+                   colClasses=cls)
+}
+train <- raw.train()
+test <- raw.test()
+```
+
+Now train and cross validation data you want to you for a specific department and store
+```{r}
+organizeData <- function(train, testSz, s, d){
+  
+  #format date correctly
+  train$Date <- as.Date(train$Date,format = "%Y-%m-%d")
+  
+  #get current subset of interest
+  t_d_s <- subset(train,train$Dept==d & train$Store==s & train$Date<"2012-02-03")
+  cv_d_s <- subset(train,train$Dept==d & train$Store==s & train$Date>="2012-02-03")
+  
+  tsT <-ts(t_d_s[,4],frequency=52,start=c(2010,5),end = c(2012,12))
+  tsCV <-ts(cv_d_s[,4],frequency=52,start=c(2012,13))
+  
+  split_data <- list("trainData" = t_d_s, "cvData" = cv_d_s, "tsTrain" = tsT, "tsCV" = tsCV)
+  return(split_data)
+  
+  
+}
+
+```
+
+```{r}
+getAllData <- function(train,s,d){
+  
+  #format date correctly
+  train$Date <- as.Date(train$Date,format = "%Y-%m-%d")
+  
+  #get current subset of interest
+  trainSub <- subset(train,train$Dept==d & train$Store==s )
+  
+  if(length(trainSub$Date) > 0){
+    thisTs <-ts(trainSub[,4],frequency=52,start=c(2010,5))
+    
+    split_data <- list("ts" = thisTs, "train" = trainSub)
+    return(split_data)
+  }else{
+    return(list("ts" =  NULL, "train" = NULL ))
+  }
+  
+}
+```
+
+```{r}
+
+```
+
+```{r}
+#predict using combo of seasonality and arima
+makeSaArimaPred <-  function(tsCV,tsT){
+  horizon <- length(tsCV)
+  thisTs <- ts(tsT, frequency=52)
+  fc <- stlf(thisTs, 
+             h=horizon, 
+             s.window=3, 
+             method='arima',
+             ic='bic')
+  
+  pred <- as.numeric(fc$residual)
+  
+  #plot(pred)
+  plot <-  (as.numeric(fc$residual))
+  # second plot  EDIT: needs to have same ylim
+  #par(new = TRUE)
+  #plot(1:horizon,tsCV,col="green")
+  #matplot (1:horizon, cbind (tsCV, pred), pch = 19)
+  #Acf(fc$fitted,lag.max = 20)
+  
+  return(pred)
+}
+```
+
+```{r}
+
+#use this function to write the residuals of the arima fit to a csv for the neural network
+for(d in 1:5){
+  pred <- rep(0,39)
+  count <- 0
+  for(s in 1:1){
+    splitData <- organizeData(train,test,s,d)
+    p <- makeSaArimaPred(splitData$tsCV,splitData$tsTrain)
+    
+    horizon <- 40
+    thisTs <- ts(splitData$tsTrain, frequency=52)
+    fc <- stlf(thisTs, 
+               h=horizon, 
+               s.window=3, 
+               method='arima',
+               ic='bic')
+    print(paste("Department:",d))
+    print(fc$method)
+    #pred <- as.numeric(fc$residual)
+    
+    #plot(p)
+    #plot(splitData$tsTrain)
+    resids <-splitData$tsTrain-as.numeric(fc$fitted)
+    Acf(as.numeric(fc$residual))
+    matplot (1:length(p), cbind (p, as.numeric(fc$residual),splitData$tsTrain,as.numeric(fc$fitted)), pch = 19)
+    matplot (1:length(p), cbind ( as.numeric(fc$residual),resids), pch = 19)
+
+    #write.table(as.numeric(fc$residual), paste("~/Desktop/residuals_store1_dept",d,".csv", sep=""), sep=",")
+    #write.table(thisPred, "~/Desktop/pred.csv", sep=",")
+    #pred <- pred + p
+    #count <-count + 1
+  }
+  #pred <- pred/count
+  #plot(pred)
+}
+```
+```{r}
+#now we train using all of the training data
+test_ix = 1
+num_test = length(test$Store)
+thisPred <- rep(0,num_test)
+thisStr <-rep('     ',num_test)
+while(test_ix < num_test){
+  test_item <- test[test_ix,]
+  thisD <- test_item$Dept
+  thisS <- test_item$Store
+  
+  horizon = subset(test,test$Dept==thisD &test$Store==thisS )
+  horizon = length(horizon[,1])
+  thisData <- getAllData(train,thisS,thisD)
+  tmp <-rep(0,horizon)
+  if(length(thisData$ts) > 104){
+    p <- makeSaArimaPred(tmp,thisData$ts)
+  }
+  else{
+    p <-rep(mean(thisData$ts), horizon)
+  }
+  #plot([as.numeric(thisData$ts),p])
+  #plot(p)
+  #matplot (1:horizon, cbind (thisData$ts[1:horizon], pred), pch = 19)
+  #a <-  append(as.numeric(thisData$ts),as.numeric(p) ,after = length(thisData$ts))
+  #plot(a)
+  for(j in 1:length(p)){
+    if(is.nan(as.numeric(p[j]))){
+      p[j] = mean(thisData$ts)
+    }
+    thisPred[test_ix] <- as.numeric(p[j])
+    
+    test_item <- test[test_ix,]
+    item_str = paste(test_item$Store,test_item$Dept,test_item$Date, sep="_")
+    thisStr[test_ix] <- item_str
+    test_ix <- test_ix+1
+    
+  }
+  
+}
+
+write.table(thisStr, "~/Desktop/labels.csv", sep=",")
+write.table(thisPred, "~/Desktop/pred.csv", sep=",")
+```
+```{r}
+##exploratory code all below - not used for resultd
+num_pred <- 39
+stores <- unique(train$Store)
+dept <- unique(train$Dept)
+all_predictions <- matrix(list(), nrow=39, ncol=99)
+bad_count = 0
+for(d in dept){
+  pred <- rep(0,39)
+  count <- 0
+  for(s in stores){
+    sd_train <- getAllData(train,s,d)
+    if(length(sd_train$ts) > 110){
+      len<- 143-length(sd_train$ts)
+      tmp <-rep(0,39)
+      p <- makeSaArimaPred(tmp,sd_train$ts)
+      pred <- pred + p
+      count <-count + 1}
+    else{
+      bad_count <- bad_count + 1
+    }
+  }
+  pred <- pred/count
+  for(i in 1:39){
+    all_predictions[1:39,as.numeric(d)]<- pred
+    #plot(pred)
+  }
+  
+}
+
+
+```
+```{r}
+#now we iterate throught the testData
+n_test <- length(test[,1])
+test$Date <- as.Date(test$Date,format = "%Y-%m-%d")
+testDates = test$Date[1:39]
+
+output_predictions = rep(0,length(test$Store))
+output_labels = rep("         ",length(test$Store))
+
+ix <- 0
+for(  i in 1:n_test){
+  test_item <- test[i,]
+  item_str = paste(test_item$Store,test_item$Dept,test_item$Date, sep="_")
+  ix <- ix + 1
+  
+  ix_r <- match(test_item$Date, testDates)
+  ix_c <- as.numeric(test_item$Dept)
+  if( sapply(all_predictions[ix_r,ix_c], is.null)   ){
+    output_predictions[ix] <- 15981
+  } else if(sapply(all_predictions[ix_r,ix_c], is.nan) ){
+    output_predictions[ix] <- 15981
+  }else if(all_predictions[ix_r,ix_c] == 0  ){
+    output_predictions[ix] <- 15981
+  }
+  else{
+    output_predictions[ix] <- as.numeric(all_predictions[ix_r,ix_c])
+  }
+  output_labels[ix] <- item_str 
+  
+}
+
+output <- list('pred',rep(0,0),'label' = rep(0,0))
+output$label <- output_labels
+output$pred <- output_predictions
+write.table(thisStr, "~/Desktop/labels.csv", sep=",")
+write.table(thisPred, "~/Desktop/pred.csv", sep=",")
+
+
+
+```{r}
+##can i delete?
+
+train_d1_s1 <- subset(train,train$Dept==1 & train$Store==2 )
+test_d1_s1 <- subset(test,test$Dept==1 & test$Store==2)
+
+train_d1_s1$Date <- as.Date(train_d1_s1$Date,format = "%Y-%m-%d")
+t_d1_s1 <- subset(train,train$Dept==1 & train$Store==2 & train$Date>"2012-02-03")
+cv_d1_s1 <- subset(train,train$Dept==1 & train$Store==2 & train$Date>="2012-02-03")
+
+test_d1_s1 <- subset(test,test$Dept==1 & test$Store==2)
+tsT <-ts(t_d1_s1[,4],frequency=52,start=c(2010,5),end = c(2012,12))
+tsCV <-ts(cv_d1_s1[,4],frequency=52,start=c(2012,13))
+plot(tsT)
+plot(tsCV)
+
+Acf(tsT)
+tsWeeklySales <-ts(train_d1_s1[,4],frequency=52,start=c(2010,5),end = c(2012,10))
+testWeeklySales <-ts(train_d1_s1[,4],frequency=52,start=c(2012,11))
+
+t_WeeklySales = 
+  cv_WeeklySales = 
+  
+  plot(tsWeeklySales)
+plot(testWeeklySales)
+plot(decompose(tsWeeklySales), lwd=4,cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+```
+
+```{r}
+train_sales <- window(tsWeeklySales,start=c(2010,5),end=c(2011,52),frequency = 52)
+test_sales <- window(tsWeeklySales,start=2012,frequency = 52)
+ndiffs(tsWeeklySales,test="adf",max.d=5)
+n <- Acf(tsWeeklySales,lag.max=52,plot = TRUE)
+log_TSdiff2 = log(tsWeeklySales)
+TSdiff2=diff(log_TSdiff2, differences=1,lag=52)
+plot(TSdiff2)
+adf.test(TSdiff2,alternative = "stationary")
+adf.test(tsWeeklySales,alternative = "stationary")
+adfTest(TSdiff2, lags = 0, type = "nc")
+
+acf(TSdiff2)
+Pacf(tsWeeklySales,lag.max = 19,plot = TRUE, main = 'Original')
+Pacf(TSdiff2,lag.max = 20,plot = TRUE, main = 'Original')
+
+
+Several of the models were based on the stlf() function, which does an STL decomposition and then makes a non-seasonal forecast over the seasonally adjusted data, before adding back the naively extended seasonal component
+
+```
+
+
+```{r}
+horizon <- 39
+s <- ts(tsT, frequency=52)
+fc <- stlf(s, 
+           h=horizon, 
+           s.window=3, 
+           method='arima',
+           ic='bic')
+plot(fc$seasonal)
+plot(fc$residuals)
+
+
+
+plot(tsCV)
+# second plot  EDIT: needs to have same ylim
+par(new = TRUE)
+plot(fc$seasonal,col="red")
+par(new = TRUE)
+plot(fc$mean,col="green")
+
+
+```
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.

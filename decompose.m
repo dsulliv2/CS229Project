@@ -1,0 +1,134 @@
+function [trend, seasonal, error] = decompose(dates,t,x,years,m,doPlot)
+%We chose an additive model because aour data does not change in frequency
+%over time
+
+%follow notes from
+% http://miningthedetails.com/blog/r/TimeSeriesDecomposition/
+
+%modeling this R function
+% https://www.rdocumentation.org/packages/stats/versions/3.4.1/topics/decompose
+
+%t is the week of the year
+%Yt=Tt+St+et
+
+% The function first determines the trend component using a moving average
+% (if filter is NULL, a symmetric window with equal weights is used), and
+% removes it from the time series. Then, the seasonal figure is computed
+% by averaging, for each time unit, over all periods. The seasonal figure
+%is then centered. Finally, the error component is determined by removing
+%trend and seasonal figure (recycled as needed) from the original time series.
+t = arrayfun(@weeknum,t);
+k = 52; % weeks in a year
+yix = years == 2012;
+t(yix) = t(yix) + 1;
+trend = tsmovavg(x,'s',52,1);%movmean(x,k);%,'Endpoints','discard');
+
+t_unq = unique(t);
+seasonal = zeros(1,length(t));
+christmas = [datenum('31-Dec-10');...
+    datenum('30-Dec-11');...
+    datenum('28-Dec-12'); ...
+    datenum('27-Dec-13')];
+christmas = ['31-Dec-10';...
+    '30-Dec-11';...
+    '28-Dec-12'; ...
+    '27-Dec-13'];
+easter = [(datetime('4-Apr-10'));...
+    datetime('24-Apr-11');...
+    datetime('8-Apr-12'); ...
+    datetime('31-March-13')];
+easter = [(datetime('9-Apr-2010'));...
+    datetime('29-Apr-2011');...
+    datetime('13-Apr-2012'); ...
+    datetime('5-Apr-2013')];
+
+easter_ix = datefind(easter, dates);
+pre_easter_ix1 = easter_ix-ones(size(easter_ix));
+pre_easter_ix2 = pre_easter_ix1-ones(size(easter_ix));
+pre_easter_ix3 = pre_easter_ix2-ones(size(easter_ix));
+post_easter_ix = easter_ix+ones(size(easter_ix));
+
+a_easter_ix = [ easter_ix+ones(size(easter_ix))]
+
+easter_mean = mean(x(easter_ix));
+pre_easter_mean1 = mean(x(pre_easter_ix1));
+pre_easter_mean2 = mean(x(pre_easter_ix2));
+pre_easter_mean3 = mean(x(pre_easter_ix3));
+post_easter_mean = mean(x(post_easter_ix));
+
+april_ix = find(m == 4);
+non_easter_ix = setdiff(april_ix,...
+    union(union(easter_ix,union(union(pre_easter_ix1,post_easter_ix),pre_easter_ix2)),pre_easter_ix3));
+april_mean = mean(x(non_easter_ix));
+for i = 1: length(t_unq)
+    
+    ix = find(t==t_unq(i));
+    e_ix = [];
+    if(sum(find(ismember(easter_ix , ix)))>0)
+        e_ix = intersect(ix,easter_ix);
+        seasonal(e_ix) = easter_mean;
+    end
+    ne_ix = [];
+    if(sum(find(ismember(non_easter_ix , ix))>0))
+        ne_ix = intersect(ix,non_easter_ix);
+        seasonal(ne_ix) = april_mean;
+    end
+    pe_ix1 = [];
+    if(sum(find(ismember(pre_easter_ix1 , ix))>0))
+        pe_ix1 = intersect(ix,pre_easter_ix1);
+        seasonal(pe_ix1) = pre_easter_mean1;
+    end
+    pe_ix2 = [];
+    if(sum(find(ismember(pre_easter_ix2 , ix))>0))
+        pe_ix2 = intersect(ix,pre_easter_ix2);
+        seasonal(pe_ix2) = pre_easter_mean2;
+    end
+    pe_ix3 = [];
+    if(sum(find(ismember(pre_easter_ix3 , ix))>0))
+        pe_ix3 = intersect(ix,pre_easter_ix3);
+        seasonal(pe_ix3) = pre_easter_mean3;
+    end
+     pe_ix4 = [];
+    if(sum(find(ismember(post_easter_ix , ix))>0))
+        pe_ix4 = intersect(ix,post_easter_ix);
+        seasonal(pe_ix4) = post_easter_mean;
+    end
+    pe_ixs = union(post_easter_ix,union(ne_ix,pe_ix4));
+   pe_ixs = union(pe_ixs,pe_ix2);
+   pe_ixs = union(pe_ixs,pe_ix3);
+
+    ix = setdiff(ix,union(e_ix,pe_ixs));
+    seasonal(ix) = mean(x(ix));
+end
+
+seasonal = seasonal';
+error = x - seasonal - trend;
+if(doPlot)
+    figure
+    title('Time Series Decomposition')
+    hold on
+    subplot(4,1,1);
+    plot(x,'b','LineWidth',2)
+    title('Original Time Series Data')
+    xlabel('Week')
+    ylabel('Sales')
+    hold on
+    subplot(4,1,2);
+    plot(seasonal,'m','LineWidth',2)
+    title('Seasonal Component')
+    xlabel('Week')
+    ylabel('Sales')
+    hold on
+    subplot(4,1,3);
+    plot(error,'k','LineWidth',2)
+    title('Error Component')
+    xlabel('Week')
+    ylabel('Sales')
+    hold on
+    subplot(4,1,4);
+    plot(trend,'g','LineWidth',2)
+    xlabel('Week')
+    ylabel('Sales')
+    title('Trend Component')
+end
+end

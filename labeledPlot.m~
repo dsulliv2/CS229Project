@@ -1,0 +1,28 @@
+function  labeledPlot(x,y,c)
+%{
+x - x data
+y - y data
+c - data label 
+C- color map
+%}
+
+%% https://stackoverflow.com/questions/31685078/change-color-of-2d-plot-line-depending-on-3rd-value
+
+%% // Prepare matrix data
+N = length(unique(c)); %%number of unique Classes
+C = getColorMap(N);
+
+ix = 1:length
+xx=[x x];           %// create a 2D matrix based on "X" column
+yy=[y y];           %// same for Y
+zz=zeros(size(xx)); %// everything in the Z=0 plane
+cc =[c c] ;         %// matrix for "CData"
+
+%// draw the surface (actually a line)
+figure
+hs=surf(xx,yy,zz,cc,'EdgeColor','interp','FaceColor','none','Marker','o') ;
+
+colormap(C) ;     %// assign the colormap
+shading flat                    %// so each line segment has a plain color
+view(2) %// view(0,90)          %// set view in X-Y plane
+colorbar

@@ -1,0 +1,174 @@
+%CS229 Final Project
+%Forecasting Walmart Sales
+
+clc
+clear
+%% Load our data
+% NB: train and test are given by Kaggle. Test is the "to-be-predicted"
+% data that we do NOT have the ground-truth to.
+[stores, trainT, test] = load_data();
+train_wk = array2table(arrayfun(@week,trainT.Date));
+test_wk = array2table(arrayfun(@week, test.Date));
+
+trainT = [train_wk trainT];
+trainT.Properties.VariableNames{'Var1'} = 'Week_Number';
+
+
+%% Time Series NN
+
+% storeNums = unique(train.Store);
+% storeDepts = unique(train.Dept)
+% for six  = 1:numel(storeNums)
+%     s = storeNums(six)
+%     for dix = 1:numel(storeDepts)
+%         d = storeDepts(dix)
+%         % get the indices where store num = s and dept = d
+%         ix = intersect(find(train.Store == s), find(train.Dept == d));
+%         
+%         %do your work per dept per store here
+%     end
+% end
+
+%Select store and department to fit neural network for (will need one for
+%each combination)
+storeNum = 1;
+storeDept = 1;
+
+%Find the indices of trainT for the store and department selected (ts11)
+%and then find the week numbers corresponding to the samples (ts11_wks)
+%and also find the weekly sales correspdonding to the samples (ts11_sales)
+ts11 = intersect(find(trainT.Store == storeNum), find(trainT.Dept == storeDept));
+ts11_wks = trainT.Week_Number(ts11);
+ts11_sales = double(trainT.Weekly_Sales(ts11));
+
+%get the holiday flag (with Easter added) for each sample
+% ts11_holiday = trainT.IsHoliday2(ts11);
+
+%number of weeks at the end to test our model against
+num_test = 33;
+
+ts11_train = ts11_sales(1:end-num_test);
+ts11_test = ts11_sales(end-num_test + 1:end);
+
+
+%create week vectors (1-53) to hold the sums, 
+%counts, and averages for each week's sales for this store-dept combo
+
+% wksales_sum = zeros(1, 53);
+% wksales_ct = zeros(1, 53);
+wksales_avg = zeros(1, 53);
+
+for i = 1:53
+   
+    thiswk = double(ts11_wks == i);
+    thiswk_sum = sum(thiswk.*ts11_sales);
+    thiswk_ct = sum(thiswk);
+    thiswk_avg = thiswk_sum/thiswk_ct;
+    
+    wksales_avg(i) = thiswk_avg;
+    
+end
+
+%use time lag of d (feed t-1, t-2,...,t-d values as inputs)
+%delcare the structures to contain our train set
+d = 6;
+y = zeros(length(ts11_train) - d, 1);
+x = zeros(length(ts11_train) - d, d+1); %plus one for the week mean input
+
+%declare the structures to contain our internal hold-out set test set
+y_test = zeros(num_test, 1);
+x_test = zeros(num_test, d+1); %plus one for the week mean input
+
+%fill the train set structures (each x will be the last d values, with each
+%staggered by one time step)
+for i = 1:length(ts11_train) - d  
+    
+    currwk = ts11_wks(i+d);
+    x(i,end) = wksales_avg(currwk);
+    x(i,1:end-1) = ts11_train(i:i+d-1);
+    y(i) = ts11_train(i+d);  
+end
+
+%fill the test set structures
+for j = 1:num_test
+    
+    currwk = ts11_wks(j+end-num_test);
+      
+%     x_test(j,end) = wksales_avg(currwk)
+%     x_test(j,1:end-1) = ts11_train(j+end-num_test-d+1:j+end-num_test);
+%     y_test(j) = ts11_train(j+end-num_test);
+    
+    x_test(j,end) = wksales_avg(currwk);
+    x_test(j,1:end-1) = ts11_sales(j+end-num_test-d+1:j+end-num_test);
+    y_test(j) = ts11_sales(j+end-num_test);
+
+end
+
+%flip everything so it matches the NN dimensions 
+y = y';
+x = x';
+y_test = y_test';
+x_test = x_test';
+
+
+
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+%               CREATE AND TRAIN THE FF-NN
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+% % Create a Fitting Network
+ hiddenLayerSize = 50; %30 works well before using mean weekly sales input
+ net = fitnet(hiddenLayerSize);
+%  net.trainFcn = 'trainscg';
+ net.trainFcn = 'trainrp';
+% 
+% % Set up Division of Data for Training, Validation, Testing
+
+  %how many weeks we can train for since we need an offset of d starting at
+  %the front. For ex, if we have d=6, then we have 143-6-25 = 112
+  %Note: will have to change the numerator accordingly
+  num_actual_train = length(ts11)-d-num_test; 
+  net.divideParam.trainRatio = 80/num_actual_train;
+  net.divideParam.valRatio = 26/num_actual_train;
+  net.divideParam.testRatio = 0/num_actual_train;
+%  
+% % Train the Network
+  [net,tr] = train(net,x,y);
+% 
+% % Test the Network
+outputs = net(x);
+errors = gsubtract(outputs,y);
+performance = perform(net,y,outputs);
+
+
+outputs_test = net(x_test);
+
+MAE = sum(abs(y_test - outputs_test))/num_test;
+
+
+% [y,m,~] = ymd(train.Date(ix))
+% sales = sales(ix)
+% [trend, seasonal, error] = decompose(train.Date(ix),...
+%     date(ix),sales,y,m,true);%52 weeks in year
+%  
+
+figure
+plot(linspace(1, num_test, num_test), y_test,'*-g', 'LineWidth', 2)
+hold on
+plot(linspace(1, num_test, num_test), outputs_test,'*-r', 'LineWidth', 1)
+legend('Ground-truth', 'Predicted')
+
+figure
+subplot(2,1,1)
+plot(linspace(1,53,53),wksales_avg)
+subplot(2,1,2)
+plot(linspace(1,143,143),ts11_sales)
+set(gca, 'xtick', linspace(1,140,140/10));
+hold on
+plot(linspace(143-num_test,143,num_test), outputs_test);
+
+figure
+plot(linspace(1,143,143),ts11_sales)
+set(gca, 'xtick', linspace(0,140,150));
+hold on
+plot(linspace(143-num_test,143,num_test), outputs_test);
